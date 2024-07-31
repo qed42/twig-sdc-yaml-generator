@@ -5,7 +5,7 @@ import argparse
 
 # Define regex patterns for matching variables, object properties, default values, and conditionals
 variable_pattern = re.compile(r'\* - (\w+): \[(\w+|object|array)\] (.*)')
-object_pattern = re.compile(r'\*   - (\w+): \[(\w+)\] (.*)')
+object_property_pattern = re.compile(r'\*   - (\w+): \[(\w+)\] (.*)')
 default_pattern = re.compile(r'{% set (\w+) = [^%]+ \? [^:]+ : (.+?) %}')
 conditional_pattern = re.compile(r'{% if (\w+) %}')
 
@@ -92,13 +92,17 @@ def parse_variables(twig_content, component_name):
     # Handle object properties
     if var_type == 'object':
       variable_entry['properties'] = {}
-      object_properties = object_pattern.findall(twig_content)
-      for obj_name, obj_type, obj_desc in object_properties:
-        variable_entry['properties'][obj_name] = {
-          'type': obj_type,
-          'title': obj_name.replace('_', ' ').capitalize(),
-          'description': obj_desc
-        }
+      object_scope_pattern = re.compile(rf'\* - {var_name}: \[object\](.*?)(\* - |\Z)', re.DOTALL)
+      object_scope_match = object_scope_pattern.search(twig_content)
+      if object_scope_match:
+        object_scope_content = object_scope_match.group(1)
+        for obj_match in object_property_pattern.finditer(object_scope_content):
+          obj_name, obj_type, obj_desc = obj_match.groups()
+          variable_entry['properties'][obj_name] = {
+            'type': obj_type,
+            'title': obj_name.replace('_', ' ').capitalize(),
+            'description': obj_desc
+          }
     variables[var_name] = variable_entry
 
   # Extract default values from Twig set statements
