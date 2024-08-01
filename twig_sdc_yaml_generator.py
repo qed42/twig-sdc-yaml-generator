@@ -8,6 +8,7 @@ variable_pattern = re.compile(r'\* - (\w+): \[(\w+|object|array)\] (.*)')
 object_property_pattern = re.compile(r'\*   - (\w+): \[(\w+)\] (.*)')
 default_pattern = re.compile(r'{% set (\w+) = [^%]+ \? [^:]+ : (.+?) %}')
 conditional_pattern = re.compile(r'{% if (\w+) %}')
+default_pipe_pattern = re.compile(r'(\w+)\|default\(\'(.+?)\'\)')
 
 # Define patterns for enum values associated with specific variables and components
 enum_patterns = {
@@ -114,6 +115,15 @@ def parse_variables(twig_content, component_name):
         default_value = None
       variables[variable_name]['default'] = default_value
 
+  # Extract default values from patterns like `variable|default('value')`
+  pipe_matches = default_pipe_pattern.findall(twig_content)
+  for variable_name, default_value in pipe_matches:
+    default_value = default_value.strip().replace('\'', '').replace('"', '')
+    if variable_name in variables:
+      if default_value == 'null':
+        default_value = None
+      variables[variable_name]['default'] = default_value
+
   # Extract variables used in conditional statements
   for match in conditional_pattern.finditer(twig_content):
     conditional_variables.add(match.group(1))
@@ -144,16 +154,18 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
         required_fields.append(key)
 
   yaml_data = {
-    'name': component_name,
-    'props': {
-      'type': 'object',
-      'properties': variables  # Include all variables
-    }
+      'name': component_name,
+      'props': {
+          'type': 'object'
+      }
   }
 
-  # Add required fields if not empty
+  # Add required fields inside props before properties if not empty
   if required_fields:
-    yaml_data['props']['required'] = required_fields
+      yaml_data['props']['required'] = required_fields
+
+  # Include properties
+  yaml_data['props']['properties'] = variables  # Include all variables
 
   # Add slots if not empty
   if slots:
