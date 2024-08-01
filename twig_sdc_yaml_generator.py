@@ -147,10 +147,13 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
     'name': component_name,
     'props': {
       'type': 'object',
-      'required': required_fields,
       'properties': variables  # Include all variables
     }
   }
+
+  # Add required fields if not empty
+  if required_fields:
+    yaml_data['props']['required'] = required_fields
 
   # Add slots if not empty
   if slots:
