@@ -149,9 +149,12 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
       'type': 'object',
       'required': required_fields,
       'properties': variables  # Include all variables
-    },
-    'slots': slots
+    }
   }
+
+  # Add slots if not empty
+  if slots:
+    yaml_data['slots'] = slots
 
   # Include JavaScript library override if applicable
   if has_js_file:
