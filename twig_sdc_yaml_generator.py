@@ -48,13 +48,144 @@ enum_patterns = {
   'orientation': ['vertical', 'horizontal']
 }
 
-def parse_variables(twig_content, component_name):
+def format_with_quotes(name):
+  """
+  Format the given name by replacing underscores with spaces, capitalizing it, 
+  and wrapping it in double quotes. If the name contains double quotes, they will be removed.
+
+  Args:
+      name (str): The name to format.
+
+  Returns:
+      str: The formatted name.
+  """
+  name = name.replace('_', ' ').capitalize()
+  if '"' in name:
+    name = name.replace('"', '')
+  if not name.startswith('"') or not name.endswith('"'):
+    name = '"' + name + '"'
+  return name
+
+
+def find_include_file(directory, var_name):
+    """
+    Find the include file with the same name as the variable in the specified directory.
+
+    Args:
+        directory (str): The path to the directory to search.
+        var_name (str): The name of the variable to search for.
+
+    Returns:
+        str: The path to the include file if found, None otherwise.
+    """
+    print(f"Searching for include file matching variable '{var_name}' in directory '{directory}'...")
+    
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            if file == f'{var_name}':
+                include_file_path = os.path.join(root, file)
+                print(f"Include file found: {include_file_path}")
+                return include_file_path
+    
+    print(f"No include file found for variable '{var_name}'.")
+    return None
+
+
+def check_variable_in_includes(twig_content, target_var_name):
+    """
+    Check if a variable name or its properties are present in the values of include statements
+    and return the Twig file name if the variable or its properties are found in the values.
+    Also return the variables and their properties inside the include block.
+
+    Args:
+        twig_content (str): The content of the Twig file.
+        var_name (str): The variable name to search for.
+
+    Returns:
+        tuple: A tuple containing the Twig file name and a dictionary of variables found inside the include block.
+               Returns (None, None) if the variable or its properties are not found.
+    """
+    # Regex pattern to capture include statements and variable definitions
+    include_pattern = re.compile(r"{%\s*include\s*['\"]@[^/]+/[^/]+/([^'\"]+\.twig)['\"]\s*with\s*\{([^}]*)\}\s*only\s*%}")
+
+    # Dictionary to hold variables found inside include block
+    include_variables_name = {}
+
+    # Check for direct variable usage
+    for include_match in include_pattern.finditer(twig_content):
+        file_name = include_match.group(1)  # Extract the Twig file name
+        variables_content = include_match.group(2)  # Extract the content inside the with clause
+       
+        # Extract variables from the with content
+        variables_dict = {}
+        for var_match in re.finditer(r'(\w+):\s*(\w+|\'[^\']*\'|\"[^\"]*\")', variables_content):
+            var_name_extracted = var_match.group(1).strip()
+            var_value = var_match.group(2).strip()
+            variables_dict[var_name_extracted] = var_value
+       
+        # Search for the target variable name or its properties in the with content
+        if re.search(r'\b{}\b'.format(re.escape(target_var_name)), variables_content):
+            include_variables_name = variables_dict
+            print(f"Variable '{target_var_name}' or its properties found directly in include file '{file_name}'.")
+            return file_name, include_variables_name
+
+    # Check for indirect usage
+    # Example: Detect variables used in loops
+    for loop_match in re.finditer(r"{%\s*for\s+(\w+)\s+in\s+(\w+)\s*%}", twig_content):
+        loop_var = loop_match.group(1)  # The loop variable (e.g., 'tag')
+        loop_source = loop_match.group(2)  # The source variable (e.g., 'tags')
+        
+        if loop_source == target_var_name:
+            # Extract the content where the loop variable is used
+            loop_content_start = loop_match.end()
+            loop_content_end = twig_content.find("{% endfor %}", loop_content_start)
+            loop_content = twig_content[loop_content_start:loop_content_end]
+            
+            if re.search(r'\b{}\b'.format(re.escape(loop_var)), loop_content):
+                # If the loop variable is used in an include, consider indirect match
+                for include_match in include_pattern.finditer(loop_content):
+                    file_name = include_match.group(1)  # Extract the Twig file name
+                    variables_content = include_match.group(2)  # Extract the content inside the with clause
+                    
+                    # Extract variables from the with content
+                    variables_dict = {}
+                    for var_match in re.finditer(r'(\w+):\s*(\w+|\'[^\']*\'|\"[^\"]*\")', variables_content):
+                        var_name_extracted = var_match.group(1).strip()
+                        var_value = var_match.group(2).strip()
+                        variables_dict[var_name_extracted] = var_value
+                    
+                    if re.search(r'\b{}\b'.format(re.escape(loop_var)), variables_content):
+                        include_variables_name = variables_dict
+                        print(f"Variable '{target_var_name}' indirectly found in include file '{file_name}' through loop variable '{loop_var}'.")
+                        return file_name, include_variables_name
+
+    # If the variable name or its properties are not found
+    print(f"Variable '{target_var_name}' not found in include values.")
+    return None, None
+
+
+def get_common_properties(include_variables_name, include_variables):
+    """
+    Get the common properties between two dictionaries.
+
+    Args:
+        include_variables_name (dict): The dictionary of variables from the include block.
+        include_variables (dict): The dictionary of variables from the parsed include file.
+
+    Returns:
+        dict: A dictionary containing common properties.
+    """
+    common_properties = {key: include_variables[key] for key in include_variables if key in include_variables_name}
+    return common_properties
+def parse_variables(twig_content, component_name, file_directory):
+ 
   """
   Parse variables from Twig content, extract slots and conditional variables.
 
   Args:
     twig_content (str): The content of the Twig file.
     component_name (str): The name of the component.
+    file_directory (str): The directory where the Twig file is located.
 
   Returns:
     tuple: A tuple containing variables dictionary, slots dictionary, and conditional variables set.
@@ -63,6 +194,13 @@ def parse_variables(twig_content, component_name):
   slots = {}
   conditional_variables = set()
 
+  all_variable_names_twig = []
+ 
+  all_variable_names_twig = []
+  for match in variable_pattern.finditer(twig_content):
+    var_name, var_type, var_desc = match.groups()
+    all_variable_names_twig.append(var_name)
+
   # Find all variable matches in the Twig content
   for match in variable_pattern.finditer(twig_content):
     var_name, var_type, var_desc = match.groups()
@@ -70,7 +208,7 @@ def parse_variables(twig_content, component_name):
     # Detect and handle slots
     if 'slot' in var_desc.lower():
       slots[var_name] = {
-        'title': var_name.replace('_', ' ').capitalize(),
+        'title':  var_name.replace('_', ' ').capitalize(),
         'description': var_desc
       }
       continue
@@ -104,6 +242,40 @@ def parse_variables(twig_content, component_name):
             'title': obj_name.replace('_', ' ').capitalize(),
             'description': obj_desc
           }
+
+    # Handle array properties
+    if var_type == 'array':
+      file_name, include_variables_name = check_variable_in_includes(twig_content, var_name)
+      include_file_path = find_include_file('/home/anand/Desktop/projects/qed42/my-drupal-site/web/themes/contrib/demo_design_system/components', file_name)
+      # print(include_file_path)
+      if include_file_path:
+        with open(include_file_path, 'r') as include_file:
+          include_content = include_file.read()
+          include_variables, _, _ = parse_variables(include_content, component_name, file_directory)
+          common_properties = get_common_properties(include_variables_name, include_variables)
+          all_variable_names_twig_filtered = [item for item in all_variable_names_twig if item != var_name]
+          filtered_properties = {k: v for k, v in common_properties.items() if k not in all_variable_names_twig_filtered }
+          if common_properties:
+            variable_entry['items'] = filtered_properties
+      else:
+        variable_entry['items'] = {}
+        array_scope_pattern = re.compile(rf'\* - {var_name}: \[array\](.*?)(\* - |\Z)', re.DOTALL)
+        array_scope_match = array_scope_pattern.search(twig_content)
+        if array_scope_match:
+          array_scope_content = array_scope_match.group(1)
+          array_items = {}
+          for arr_match in object_property_pattern.finditer(array_scope_content):
+            arr_name, arr_type, arr_desc = arr_match.groups()
+            array_items[arr_name] = {
+              'type': arr_type,
+              'title': arr_name.replace('_', ' ').capitalize(),
+              'description': arr_desc
+            }
+          if array_items:
+            variable_entry['items'] = array_items
+          else:
+            del variable_entry['items']  # Remove items if no properties found
+
     variables[var_name] = variable_entry
 
   # Extract default values from Twig set statements
@@ -115,7 +287,7 @@ def parse_variables(twig_content, component_name):
         default_value = None
       variables[variable_name]['default'] = default_value
 
-  # Extract default values from patterns like `variable|default('value')`
+  # Extract default values from patterns like variable|default('value')
   pipe_matches = default_pipe_pattern.findall(twig_content)
   for variable_name, default_value in pipe_matches:
     default_value = default_value.strip().replace('\'', '').replace('"', '')
@@ -179,53 +351,38 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
       }
     }
 
-  return yaml.dump(yaml_data, sort_keys=False)
-
+  return yaml.dump(yaml_data, sort_keys=False, default_flow_style=False, indent=2)
+  
 def process_directory(directory):
   """
-  Process all Twig files in a directory, generating corresponding YAML files.
+  Process all Twig files in a directory, generate YAML configurations for each component.
 
   Args:
     directory (str): The path to the directory containing Twig files.
   """
   for root, dirs, files in os.walk(directory):
     for file in files:
-      if file.endswith('.twig') and not file.endswith('.stories.twig'):
-        # Derive component name and paths
-        component_name = file.replace('.twig', '').replace('-', ' ').title().replace(' ', '')
+      if file.endswith('.twig'):
+        component_name = file.split('.')[0]
         file_path = os.path.join(root, file)
 
-        # Check for the existence of a corresponding .js file
-        js_file_path = os.path.join(root, file.replace('.twig', '.js'))
+        # Check for the existence of a JS file
+        js_file_path = os.path.join(root, f'{component_name.lower()}.js')
         has_js_file = os.path.exists(js_file_path)
 
-        # Read Twig file content
+        # Read and parse the Twig file content
         with open(file_path, 'r') as twig_file:
           twig_content = twig_file.read()
-
-        # Parse variables and generate YAML
-        variables, slots, conditional_variables = parse_variables(twig_content, component_name)
+          variables, slots, conditional_variables = parse_variables(twig_content, component_name, root)
+          
+        # Generate YAML content and write to .component.yml file
         yaml_output = generate_yaml(component_name, variables, slots, has_js_file, conditional_variables)
-
-        # Write YAML to a new file with the same name, overwriting if it exists
-        yaml_file_path = os.path.join(root, file.replace('.twig', '.component.yml'))
+        yaml_file_path = os.path.join(root, f'{component_name.lower()}.component.yml')
         with open(yaml_file_path, 'w') as yaml_file:
           yaml_file.write(yaml_output)
 
-        # Print relative path of processed files
-        relative_file_path = os.path.relpath(file_path, directory)
-        relative_yaml_path = os.path.relpath(yaml_file_path, directory)
-        print(f'Processed {relative_file_path}, output saved to {relative_yaml_path}')
-
-def main():
-  """
-  Main entry point of the script. Parses command-line arguments and processes the specified directory.
-  """
-  parser = argparse.ArgumentParser(description='Process Twig files and generate YAML files for SDC components.')
-  parser.add_argument('directory', type=str, help='The directory path to process.')
-  args = parser.parse_args()
-
-  process_directory(args.directory)
-
 if __name__ == "__main__":
-  main()
+  parser = argparse.ArgumentParser(description='Process Twig files to generate YAML configuration.')
+  parser.add_argument('directory', type=str, help='The directory containing Twig files.')
+  args = parser.parse_args()
+  process_directory(args.directory)
