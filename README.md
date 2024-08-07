@@ -39,7 +39,7 @@ This script scans a directory for Twig files, extracts variable definitions and 
 
 - **Detects and extracts default values defined within Twig `set` statements or patterns.**
 
-### Handle Array Variables (in development)
+### Handle Array Variables
 
 - **Identify Array Variables:**  
   Detects variables that are arrays and looks for related include files.
