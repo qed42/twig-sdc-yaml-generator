@@ -78,6 +78,7 @@ def find_include_file(directory, var_name):
         directory (str): The path to the directory to search.
         var_name (str): The name of the variable to search for.
 
+
     Returns:
         str: The path to the include file if found, None otherwise.
     """
@@ -204,7 +205,7 @@ def filter_properties(properties, all_variable_names_twig_filtered, var_name):
         elif key == var_name:
             nested_type = get_last_child_type(value)
             if nested_type:
-                filtered_properties[key] = nested_type
+                filtered_properties["type"] = nested_type
                 filtered_properties["array_type"] = True
     return filtered_properties
 
@@ -312,13 +313,12 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
                     filtered_properties = filter_properties(
                         common_properties, all_variable_names_twig_filtered, var_name
                     )
-                    
                     if (
                         "array_type" in filtered_properties
                         and filtered_properties["array_type"]
                     ):
                         filtered_properties.pop("array_type")
-                        variable_entry["items"] = {"type": filtered_properties}
+                        variable_entry["items"] = filtered_properties
                     else:
                         variable_entry["items"] = {
                             "type": "object",
