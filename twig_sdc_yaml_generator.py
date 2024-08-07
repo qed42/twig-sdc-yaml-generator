@@ -445,7 +445,7 @@ def process_directory(directory, include_directory):
     """
     for root, dirs, files in os.walk(directory):
         for file in files:
-            if file.endswith('.twig') and not file.endswith('.stories.twig'):
+              if file.endswith('.twig') and not file.endswith('.stories.twig'):
                 component_name = file.split(".")[0]
                 file_path = os.path.join(root, file)
                 # Check for the existence of a JS file
@@ -507,14 +507,18 @@ def main():
     parser.add_argument(
         "directory", help="Path to the directory containing Twig files."
     )
-    parser.add_argument(
-        "include_directory", help="Path to the directory containing include files."
-    )
-
+    
     args = parser.parse_args()
+    directory = args.directory
 
-    process_directory(args.directory, args.include_directory)
-
+    # Find the index of the 'components' directory
+    components_index = directory.find('components')
+    components_path = args.directory
+    # Split the path into the part up to and including 'components' and the rest
+    if components_index != -1:
+        components_path = directory[:components_index + len('components')]
+        
+    process_directory(args.directory, components_path)
 
 if __name__ == "__main__":
     main()
