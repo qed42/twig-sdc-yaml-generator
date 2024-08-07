@@ -445,7 +445,7 @@ def process_directory(directory, include_directory):
     """
     for root, dirs, files in os.walk(directory):
         for file in files:
-            if file.endswith(".twig"):
+            if file.endswith('.twig') and not file.endswith('.stories.twig'):
                 component_name = file.split(".")[0]
                 file_path = os.path.join(root, file)
                 # Check for the existence of a JS file
