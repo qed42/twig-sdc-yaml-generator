@@ -468,25 +468,16 @@ def process_directory(directory, include_directory):
                 )
                 with open(yaml_file_path, "w") as yaml_file:
                     yaml_file.write(yaml_output)
-
-                folder_component_type_mapping = {
-                    "00-base": "a base",
-                    "01-atoms": "an atom",
-                    "02-molecules": "a molecule",
-                    "03-organisms": "a organism",
-                    "04-templates": "a template",
-                }
-                component_type = ""
-                for key in folder_component_type_mapping:
-                    if key in file_path:
-                        component_type = folder_component_type_mapping[key]
-                        break
+                    
                 # Create a string with the desired content
                 readme_content = f"""
-Starshot Demo Design System {component_name.replace('-', ' ').capitalize()}
+# {component_name.replace('-', ' ').capitalize()}
+
+This is the {component_name.replace('-', ' ')} component.
 
 ## Usage
-This component is {component_type} which can be used on its own or within other components.
+
+This component can be used within Experience Builder and other page builders that support SDC. It can also be added to other components and theme templates.
 """
                 # Open a file in write mode and write the content to it
                 readme_file_path = os.path.join(root, "README.md")
