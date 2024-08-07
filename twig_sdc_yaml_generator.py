@@ -269,7 +269,12 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
         if enums:
             variable_entry["default"] = enums[0]
             variable_entry["enum"] = enums
-
+            
+        # If variable type is boolean, set description as title and remove description key
+        if var_type == "boolean":
+            variable_entry["title"] = var_desc
+            variable_entry.pop("description", None)
+        
         # Handle object properties
         if var_type == "object":
             variable_entry["properties"] = {}
