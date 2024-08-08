@@ -10,45 +10,7 @@ default_pattern = re.compile(r"{% set (\w+) = [^%]+ \? [^:]+ : (.+?) %}")
 conditional_pattern = re.compile(r"{% if (\w+) %}")
 default_pipe_pattern = re.compile(r"(\w+)\|default\(\'(.+?)\'\)")
 null_coalescing_pattern = re.compile(r"\b(\w+)\s*\?\?\s*null\b")
-
-
-# Define patterns for enum values associated with specific variables and components
-enum_patterns = {
-    "theme": ["light", "dark"],
-    "direction": ["horizontal", "vertical"],
-    "size": {
-        "button": ["large", "regular", "small"],
-        "chip": ["large", "regular", "small"],
-        "field-description": ["large", "regular"],
-        "paragraph": ["extra-large", "large", "regular", "small"],
-        "label": ["extra-large", "large", "regular", "small", "extra-small"],
-        "icon": ["small", "regular", "large"],
-        "link-list": ["small", "regular", "large"],
-    },
-    "kind": {
-        "button": ["submit", "reset", "button", "link"],
-        "chip": ["default", "input"],
-    },
-    "type": {
-        "button": ["primary", "secondary", "tertiary"],
-        "field-message": ["error", "information", "warning", "success"],
-        "tag": ["primary", "secondary", "tertiary"],
-        "alert": ["info", "error", "warning", "success"],
-        "message": ["info", "error", "warning", "success"],
-        "navigation": ["none", "inline", "dropdown", "drawer"],
-        "logo": ["default", "stacked", "inline", "inline-stacked"],
-    },
-    "icon_placement": {
-        "button": ["left", "right"],
-        "link": ["before", "after"],
-        "tag": ["before", "after"],
-    },
-    "vertical_spacing": ["top", "bottom", "both"],
-    "description_display": ["before", "after", "invisible"],
-    "caption_position": ["before", "after"],
-    "title_display": ["visible", "invisible", "hidden"],
-    "orientation": ["vertical", "horizontal"],
-}
+enum_pattern = re.compile(r'\* - (\w+): \[(string)\] .*?: ([^,]+(?:, [^,]+)*)')
 
 
 def format_with_quotes(name):
@@ -219,6 +181,22 @@ def get_last_child_type(properties):
             last_child_type = value["type"]
     return last_child_type
 
+def parse_default_value(default_value):
+    """Parse and return the default value as the appropriate Python type."""
+    default_value = default_value.strip().replace("'", "").replace('"', "")
+    if default_value == "null":
+        return None
+    elif default_value == "false":
+        return False
+    elif default_value == "true":
+        return True
+    elif default_value == '':
+        return None  # Return None for empty strings to skip them
+    else:
+        try:
+            return eval(default_value)  # Safely evaluate literals
+        except (NameError, SyntaxError):
+            return default_value  # Return as string if it's not a literal
 
 def parse_variables(twig_content, component_name, file_directory, include_directory):
     """
@@ -263,12 +241,13 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
         }
 
         # Add enum values if applicable
-        enums = enum_patterns.get(var_name, None)
-        if isinstance(enums, dict):
-            enums = enums.get(component_name, None)
-        if enums:
-            variable_entry["default"] = enums[0]
-            variable_entry["enum"] = enums
+        # Extract and add enum values if applicable
+        enum_match = enum_pattern.match(match.group(0))
+        if enum_match:
+            _, _, enum_values = enum_match.groups()
+            enums = [enum.strip() for enum in enum_values.split(',')]
+
+            variable_entry['enum'] = enums
             
         # If variable type is boolean, set description as title and remove description key
         if var_type == "boolean":
@@ -362,23 +341,35 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
 
         variables[var_name] = variable_entry
 
-    # Extract default values from Twig set statements
-    matches = default_pattern.findall(twig_content)
-    for variable_name, default_value in matches:
-        default_value = default_value.strip().replace("'", "").replace('"', "")
-        if variable_name in variables:
-            if default_value == "null":
-                default_value = None
-            variables[variable_name]["default"] = default_value
+    patterns = [default_pattern, default_pipe_pattern]
 
-    # Extract default values from patterns like variable|default('value')
-    pipe_matches = default_pipe_pattern.findall(twig_content)
-    for variable_name, default_value in pipe_matches:
-        default_value = default_value.strip().replace("'", "").replace('"', "")
-        if variable_name in variables:
-            if default_value == "null":
-                default_value = None
-            variables[variable_name]["default"] = default_value
+    for pattern in patterns:
+        matches = pattern.findall(twig_content)
+        for variable_name, default_value in matches:
+            default_value = default_value.strip().replace("'", "").replace('"', "")
+            if variable_name in variables:
+                if default_value == "null":
+                    default_value = None
+                elif default_value == "false":
+                    default_value = False
+                elif default_value == "true":
+                    default_value = True
+                elif default_value == '':
+                    continue  # Skip empty strings
+                else:
+                    # Convert default_value to appropriate type if necessary
+                    try:
+                        default_value = eval(default_value)  # Safely evaluate literals
+                    except (NameError, SyntaxError):
+                        pass  # Keep it as a string if it's not a literal
+
+                variables[variable_name]["default"] = default_value
+
+                if 'enum' in variables[variable_name]:
+                    enums = variables[variable_name].pop('enum')
+                    variables[variable_name]['enum'] = enums
+    
+   
 
     # Extract variables used in conditional statements
     for match in conditional_pattern.finditer(twig_content):
@@ -390,7 +381,7 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
     return variables, slots, conditional_variables
 
 
-def generate_yaml(component_name, variables, slots, has_js_file, conditional_variables):
+def generate_yaml(component_name, variables, slots, has_js_file, conditional_variables, group):
     """
     Generate YAML data for the component based on parsed variables and slots.
 
@@ -419,7 +410,7 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
     yaml_data = {
         "name": component_name,
         "status": "experimental",
-        "group": "default",
+        "group": group,
         "props": {"type": "object"},
     }
 
@@ -438,6 +429,7 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
     if has_js_file:
         yaml_data["libraryOverrides"] = {"js": {f"{component_name.lower()}.js": {}}}
 
+     # Dump YAML data
     return yaml.dump(yaml_data, sort_keys=False, default_flow_style=False, indent=2)
 
 
@@ -464,9 +456,22 @@ def process_directory(directory, include_directory):
                         twig_content, component_name, root, include_directory
                     )
 
+                group = 'default'
+                
+                if '00-base' in file_path:
+                    group = 'Base'
+                elif '01-atoms' in file_path:
+                    group = 'Atoms'
+                elif '02-molecules' in file_path:
+                    group = 'Molecules'
+                elif '03-organisms' in file_path:
+                    group = 'Organisms'
+                elif '04-templates' in file_path:
+                    group = 'Templates'
+
                 # Generate YAML content and write to .component.yml file
                 yaml_output = generate_yaml(
-                    component_name, variables, slots, has_js_file, conditional_variables
+                    component_name, variables, slots, has_js_file, conditional_variables, group
                 )
                 yaml_file_path = os.path.join(
                     root, f"{component_name.lower()}.component.yml"
