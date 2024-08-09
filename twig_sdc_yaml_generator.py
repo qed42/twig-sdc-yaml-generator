@@ -198,6 +198,11 @@ def parse_default_value(default_value):
         except (NameError, SyntaxError):
             return default_value  # Return as string if it's not a literal
 
+def remove_trailing_period(s):
+    if s.endswith('.'):
+        return s[:-1]
+    return s
+
 def parse_variables(twig_content, component_name, file_directory, include_directory):
     """
     Parse variables from Twig content, extract slots and conditional variables.
@@ -245,6 +250,7 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
         enum_match = enum_pattern.match(match.group(0))
         if enum_match:
             _, _, enum_values = enum_match.groups()
+            enum_values = remove_trailing_period(enum_values)
             enums = [enum.strip() for enum in enum_values.split(',')]
 
             variable_entry['enum'] = enums
@@ -278,7 +284,6 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
                 twig_content, var_name
             )
             include_file_path = find_include_file(include_directory, file_name)
-
             if include_file_path:
                 with open(include_file_path, "r") as include_file:
                     include_content = include_file.read()
@@ -430,8 +435,47 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
         yaml_data["libraryOverrides"] = {"js": {f"{component_name.lower()}.js": {}}}
 
      # Dump YAML data
-    return yaml.dump(yaml_data, sort_keys=False, default_flow_style=False, indent=2)
+    yaml_output =  yaml.dump(yaml_data, sort_keys=False, default_flow_style=False, indent=2)
+    return add_blank_lines_before(yaml_output)
 
+def add_blank_lines_before(yaml_str):
+    lines = yaml_str.splitlines()
+    result = []
+    properties_depth = 0
+    previous_indent = 0
+
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        current_indent = len(line) - len(stripped_line)
+        # Add blank lines before properties at any level
+        if stripped_line == "properties:":
+            # if properties_depth > 0:
+            result.append("")  # Add a blank line before nested properties
+            result.append(line)
+            properties_depth += 1
+            previous_indent = current_indent
+            continue
+        
+
+        # Handle nested properties
+        if stripped_line and stripped_line != "properties:" and properties_depth > 0:
+            if   previous_indent > current_indent:
+                result.append("")  # Add a blank line before nested properties
+            previous_indent = current_indent
+        result.append(line)
+
+        # Check if exiting a properties section
+        if current_indent < previous_indent:
+            while properties_depth > 0 and current_indent <= previous_indent:
+                properties_depth -= 1
+                if properties_depth > 0:
+                    result.append("")  # Add a blank line before the next sibling properties
+                previous_indent = current_indent
+        
+        if current_indent == 0:
+            result.append("")
+
+    return "\n".join(result)
 
 def process_directory(directory, include_directory):
     """
