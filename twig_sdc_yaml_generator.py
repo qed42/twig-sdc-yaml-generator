@@ -10,27 +10,7 @@ default_pattern = re.compile(r"{% set (\w+) = [^%]+ \? [^:]+ : (.+?) %}")
 conditional_pattern = re.compile(r"{% if (\w+) %}")
 default_pipe_pattern = re.compile(r"(\w+)\|default\(\'(.+?)\'\)")
 null_coalescing_pattern = re.compile(r"\b(\w+)\s*\?\?\s*null\b")
-enum_pattern = re.compile(r'\* - (\w+): \[(string)\] .*?: ([^,]+(?:, [^,]+)*)')
-
-
-def format_with_quotes(name):
-    """
-    Format the given name by replacing underscores with spaces, capitalizing it,
-    and wrapping it in double quotes. If the name contains double quotes, they will be removed.
-
-    Args:
-        name (str): The name to format.
-
-    Returns:
-        str: The formatted name.
-    """
-    name = name.replace("_", " ").capitalize()
-    if '"' in name:
-        name = name.replace('"', "")
-    if not name.startswith('"') or not name.endswith('"'):
-        name = '"' + name + '"'
-    return name
-
+enum_pattern = re.compile(r'\* - (\w+): \[(string)\] .*?: ([^.,]+(?:, [^.,]+)*)')
 
 def find_include_file(directory, var_name):
     """
@@ -271,11 +251,17 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
                 object_scope_content = object_scope_match.group(1)
                 for obj_match in object_property_pattern.finditer(object_scope_content):
                     obj_name, obj_type, obj_desc = obj_match.groups()
-                    variable_entry["properties"][obj_name] = {
-                        "type": obj_type,
-                        "title": obj_name.replace("_", " ").capitalize(),
-                        "description": obj_desc,
-                    }
+                    if obj_type == 'boolean':
+                        variable_entry["properties"][obj_name] = {
+                            "type": obj_type,
+                            "title": obj_desc,
+                        }
+                    else:
+                        variable_entry["properties"][obj_name] = {
+                            "type": obj_type,
+                            "title": obj_name.replace("_", " ").capitalize(),
+                            "description": obj_desc,
+                        }
 
         # Handle array properties
         if var_type == "array":
@@ -413,7 +399,7 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
                 required_fields.append(key)
 
     yaml_data = {
-        "name": component_name,
+        "name": component_name.replace('-', ' ').capitalize(),
         "status": "experimental",
         "group": group,
         "props": {"type": "object"},
@@ -430,15 +416,11 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
     if slots:
         yaml_data["slots"] = slots
 
-    # Include JavaScript library override if applicable
-    if has_js_file:
-        yaml_data["libraryOverrides"] = {"js": {f"{component_name.lower()}.js": {}}}
-
      # Dump YAML data
     yaml_output =  yaml.dump(yaml_data, sort_keys=False, default_flow_style=False, indent=2)
-    return add_blank_lines_before(yaml_output)
+    return format_yaml(yaml_output)
 
-def add_blank_lines_before(yaml_str):
+def format_yaml(yaml_str):
     lines = yaml_str.splitlines()
     result = []
     properties_depth = 0
@@ -456,6 +438,17 @@ def add_blank_lines_before(yaml_str):
             previous_indent = current_indent
             continue
         
+        # Add a blank line if properties is an empty object
+        if stripped_line == "properties: {}":
+            result.append(line)
+            result.append("")  # Add a blank line after the empty properties object
+            continue
+        
+        # Handle array values
+        if stripped_line.startswith('-'):
+            # Indent the array item by two spaces
+            result.append("  " + line)
+            continue
 
         # Handle nested properties
         if stripped_line and stripped_line != "properties:" and properties_depth > 0:
@@ -475,7 +468,7 @@ def add_blank_lines_before(yaml_str):
         if current_indent == 0:
             result.append("")
 
-    return "\n".join(result)
+    return "\n".join(result).rstrip() + "\n"
 
 def process_directory(directory, include_directory):
     """
