@@ -6,68 +6,12 @@ import argparse
 # Define regex patterns for matching variables, object properties, default values, and conditionals
 variable_pattern = re.compile(r"\* - (\w+): \[(\w+|object|array)\] (.*)")
 object_property_pattern = re.compile(r"\*   - (\w+): \[(\w+)\] (.*)")
+object_property_pattern1 = re.compile(r"\* *- (\w+): \[(\w+)\] (.*)")
 default_pattern = re.compile(r"{% set (\w+) = [^%]+ \? [^:]+ : (.+?) %}")
 conditional_pattern = re.compile(r"{% if (\w+) %}")
 default_pipe_pattern = re.compile(r"(\w+)\|default\(\'(.+?)\'\)")
 null_coalescing_pattern = re.compile(r"\b(\w+)\s*\?\?\s*null\b")
-
-
-# Define patterns for enum values associated with specific variables and components
-enum_patterns = {
-    "theme": ["light", "dark"],
-    "direction": ["horizontal", "vertical"],
-    "size": {
-        "button": ["large", "regular", "small"],
-        "chip": ["large", "regular", "small"],
-        "field-description": ["large", "regular"],
-        "paragraph": ["extra-large", "large", "regular", "small"],
-        "label": ["extra-large", "large", "regular", "small", "extra-small"],
-        "icon": ["small", "regular", "large"],
-        "link-list": ["small", "regular", "large"],
-    },
-    "kind": {
-        "button": ["submit", "reset", "button", "link"],
-        "chip": ["default", "input"],
-    },
-    "type": {
-        "button": ["primary", "secondary", "tertiary"],
-        "field-message": ["error", "information", "warning", "success"],
-        "tag": ["primary", "secondary", "tertiary"],
-        "alert": ["info", "error", "warning", "success"],
-        "message": ["info", "error", "warning", "success"],
-        "navigation": ["none", "inline", "dropdown", "drawer"],
-        "logo": ["default", "stacked", "inline", "inline-stacked"],
-    },
-    "icon_placement": {
-        "button": ["left", "right"],
-        "link": ["before", "after"],
-        "tag": ["before", "after"],
-    },
-    "vertical_spacing": ["top", "bottom", "both"],
-    "description_display": ["before", "after", "invisible"],
-    "caption_position": ["before", "after"],
-    "title_display": ["visible", "invisible", "hidden"],
-    "orientation": ["vertical", "horizontal"],
-}
-
-
-def format_with_quotes(name):
-    """
-    Format the given name by replacing underscores with spaces, capitalizing it,
-    and wrapping it in double quotes. If the name contains double quotes, they will be removed.
-
-    Args:
-        name (str): The name to format.
-
-    Returns:
-        str: The formatted name.
-    """
-    name = name.replace("_", " ").capitalize()
-    if '"' in name:
-        name = name.replace('"', "")
-    if not name.startswith('"') or not name.endswith('"'):
-        name = '"' + name + '"'
-    return name
+enum_pattern = re.compile(r"\* - (\w+): \[(string)\] .*?: ([^.,]+(?:, [^.,]+)*)")
 
 
 def find_include_file(directory, var_name):
@@ -220,6 +164,30 @@ def get_last_child_type(properties):
     return last_child_type
 
 
+def parse_default_value(default_value):
+    """Parse and return the default value as the appropriate Python type."""
+    default_value = default_value.strip().replace("'", "").replace('"', "")
+    if default_value == "null":
+        return None
+    elif default_value == "false":
+        return False
+    elif default_value == "true":
+        return True
+    elif default_value == "":
+        return None  # Return None for empty strings to skip them
+    else:
+        try:
+            return eval(default_value)  # Safely evaluate literals
+        except (NameError, SyntaxError):
+            return default_value  # Return as string if it's not a literal
+
+
+def remove_trailing_period(s):
+    if s.endswith("."):
+        return s[:-1]
+    return s
+
+
 def parse_variables(twig_content, component_name, file_directory, include_directory):
     """
     Parse variables from Twig content, extract slots and conditional variables.
@@ -263,12 +231,19 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
         }
 
         # Add enum values if applicable
-        enums = enum_patterns.get(var_name, None)
-        if isinstance(enums, dict):
-            enums = enums.get(component_name, None)
-        if enums:
-            variable_entry["default"] = enums[0]
+        # Extract and add enum values if applicable
+        enum_match = enum_pattern.match(match.group(0))
+        if enum_match:
+            _, _, enum_values = enum_match.groups()
+            enum_values = remove_trailing_period(enum_values)
+            enums = [enum.strip() for enum in enum_values.split(",")]
+
             variable_entry["enum"] = enums
+
+        # If variable type is boolean, set description as title and remove description key
+        if var_type == "boolean":
+            variable_entry["title"] = var_desc
+            variable_entry.pop("description", None)
 
         # Handle object properties
         if var_type == "object":
@@ -277,15 +252,11 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
                 rf"\* - {var_name}: \[object\](.*?)(\* - |\Z)", re.DOTALL
             )
             object_scope_match = object_scope_pattern.search(twig_content)
+
             if object_scope_match:
-                object_scope_content = object_scope_match.group(1)
-                for obj_match in object_property_pattern.finditer(object_scope_content):
-                    obj_name, obj_type, obj_desc = obj_match.groups()
-                    variable_entry["properties"][obj_name] = {
-                        "type": obj_type,
-                        "title": obj_name.replace("_", " ").capitalize(),
-                        "description": obj_desc,
-                    }
+                array_scope_content = object_scope_match.group(1)
+                value = process_array_items(array_scope_content)
+                variable_entry["properties"] = value["properties"]
 
         # Handle array properties
         if var_type == "array":
@@ -294,7 +265,6 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
                 twig_content, var_name
             )
             include_file_path = find_include_file(include_directory, file_name)
-
             if include_file_path:
                 with open(include_file_path, "r") as include_file:
                     include_content = include_file.read()
@@ -326,54 +296,44 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
                         }
 
             else:
-                # Process array items inline
                 array_scope_pattern = re.compile(
                     rf"\* - {var_name}: \[array\](.*?)(\* - |\Z)", re.DOTALL
                 )
                 array_scope_match = array_scope_pattern.search(twig_content)
+
                 if array_scope_match:
                     array_scope_content = array_scope_match.group(1)
-                    array_items = {}
-
-                    for arr_match in object_property_pattern.finditer(
-                        array_scope_content
-                    ):
-                        arr_name, arr_type, arr_desc = arr_match.groups()
-                        array_items[arr_name] = {
-                            "type": arr_type,
-                            "title": arr_name.replace("_", " ").capitalize(),
-                            "description": arr_desc,
-                        }
-
-                        if array_items:
-                            variable_entry["items"] = {
-                                "type": "object",
-                                "properties": array_items,
-                            }
-                        else:
-                            del variable_entry[
-                                "items"
-                            ]  # Remove items if no properties found
+                    variable_entry["items"] = process_array_items(array_scope_content)
 
         variables[var_name] = variable_entry
 
-    # Extract default values from Twig set statements
-    matches = default_pattern.findall(twig_content)
-    for variable_name, default_value in matches:
-        default_value = default_value.strip().replace("'", "").replace('"', "")
-        if variable_name in variables:
-            if default_value == "null":
-                default_value = None
-            variables[variable_name]["default"] = default_value
+    patterns = [default_pattern, default_pipe_pattern]
 
-    # Extract default values from patterns like variable|default('value')
-    pipe_matches = default_pipe_pattern.findall(twig_content)
-    for variable_name, default_value in pipe_matches:
-        default_value = default_value.strip().replace("'", "").replace('"', "")
-        if variable_name in variables:
-            if default_value == "null":
-                default_value = None
-            variables[variable_name]["default"] = default_value
+    for pattern in patterns:
+        matches = pattern.findall(twig_content)
+        for variable_name, default_value in matches:
+            default_value = default_value.strip().replace("'", "").replace('"', "")
+            if variable_name in variables:
+                if default_value == "null":
+                    default_value = None
+                elif default_value == "false":
+                    default_value = False
+                elif default_value == "true":
+                    default_value = True
+                elif default_value == "":
+                    continue  # Skip empty strings
+                else:
+                    # Convert default_value to appropriate type if necessary
+                    try:
+                        default_value = eval(default_value)  # Safely evaluate literals
+                    except (NameError, SyntaxError):
+                        pass  # Keep it as a string if it's not a literal
+
+                variables[variable_name]["default"] = default_value
+
+                if "enum" in variables[variable_name]:
+                    enums = variables[variable_name].pop("enum")
+                    variables[variable_name]["enum"] = enums
 
     # Extract variables used in conditional statements
     for match in conditional_pattern.finditer(twig_content):
@@ -385,7 +345,9 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
     return variables, slots, conditional_variables
 
 
-def generate_yaml(component_name, variables, slots, has_js_file, conditional_variables):
+def generate_yaml(
+    component_name, variables, slots, has_js_file, conditional_variables, group
+):
     """
     Generate YAML data for the component based on parsed variables and slots.
 
@@ -412,9 +374,9 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
                 required_fields.append(key)
 
     yaml_data = {
-        "name": component_name,
+        "name": component_name.replace("-", " ").capitalize(),
         "status": "experimental",
-        "group": "default",
+        "group": group,
         "props": {"type": "object"},
     }
 
@@ -429,11 +391,239 @@ def generate_yaml(component_name, variables, slots, has_js_file, conditional_var
     if slots:
         yaml_data["slots"] = slots
 
-    # Include JavaScript library override if applicable
-    if has_js_file:
-        yaml_data["libraryOverrides"] = {"js": {f"{component_name.lower()}.js": {}}}
+    # Dump YAML data
+    yaml_output = yaml.dump(
+        yaml_data, sort_keys=False, default_flow_style=False, indent=2
+    )
+    return format_yaml(yaml_output)
 
-    return yaml.dump(yaml_data, sort_keys=False, default_flow_style=False, indent=2)
+
+def format_yaml(yaml_str):
+    lines = yaml_str.splitlines()
+    result = []
+    properties_depth = 0
+    previous_indent = 0
+
+    for i, line in enumerate(lines):
+        stripped_line = line.strip()
+        current_indent = len(line) - len(stripped_line)
+        # Add blank lines before properties at any level
+        if stripped_line == "properties:":
+            # if properties_depth > 0:
+            result.append("")  # Add a blank line before nested properties
+            result.append(line)
+            properties_depth += 1
+            previous_indent = current_indent
+            continue
+
+        # Add a blank line if properties is an empty object
+        if stripped_line == "properties: {}":
+            result.append(line)
+            result.append("")  # Add a blank line after the empty properties object
+            continue
+
+        # Handle array values
+        if stripped_line.startswith("-"):
+            # Indent the array item by two spaces
+            result.append("  " + line)
+            continue
+
+        # Handle nested properties
+        if stripped_line and stripped_line != "properties:" and properties_depth > 0:
+            if previous_indent > current_indent:
+                result.append("")  # Add a blank line before nested properties
+            previous_indent = current_indent
+        result.append(line)
+
+        # Check if exiting a properties section
+        if current_indent < previous_indent:
+            while properties_depth > 0 and current_indent <= previous_indent:
+                properties_depth -= 1
+                if properties_depth > 0:
+                    result.append(
+                        ""
+                    )  # Add a blank line before the next sibling properties
+                previous_indent = current_indent
+
+        if current_indent == 0:
+            result.append("")
+
+    return "\n".join(result).rstrip() + "\n"
+
+
+# Extract properties and their indentation levels
+def extract_properties(code):
+    start = False
+    properties = []
+    lines = code.split("\n")
+
+    for i in range(len(lines) - 1):  # ignore the last line
+        line = lines[i]
+        if line.strip().startswith("*") or line.strip().startswith("-"):
+            property_name = line.split(":")[0].strip().replace("-", "").replace("*", "")
+            if line.strip().startswith("*"):
+                spaces = line.find("-") - line.find("*") - 1
+            else:
+                spaces = line.find(":") - line.find("-") - 1
+            type_desc = re.search(r"\[(\w+)\] (.+)", line)
+            if type_desc:
+                prop_type, description = type_desc.groups()
+            else:
+                prop_type, description = None, None
+            properties.append((property_name, spaces, prop_type, description))
+    return properties
+
+
+def remove_empty_properties(obj):
+    """Recursively removes empty dictionaries with the key 'properties' from the hierarchy."""
+    if isinstance(obj, dict):
+        # Clean nested dictionaries or lists
+        keys_to_remove = []
+        for key, value in obj.items():
+            if isinstance(value, (dict, list)):
+                cleaned_value = remove_empty_properties(value)
+                if (
+                    isinstance(cleaned_value, dict)
+                    and not cleaned_value
+                    and "properties" in cleaned_value
+                ):
+                    keys_to_remove.append(key)
+                else:
+                    obj[key] = cleaned_value
+
+        # Remove empty dictionaries with the 'properties' key
+        for key in keys_to_remove:
+            obj.pop(key, None)
+
+    elif isinstance(obj, list):
+        # If it's a list, clean each item in the list
+        cleaned_list = [remove_empty_properties(item) for item in obj]
+        # Remove any empty dictionaries with the 'properties' key from the list
+        cleaned_list = [
+            item
+            for item in cleaned_list
+            if not (isinstance(item, dict) and not item and "properties" in item)
+        ]
+        return cleaned_list
+
+    return obj
+
+
+def build_hierarchy(properties):
+    """Builds the hierarchy from the given properties and returns it as a fully expanded object."""
+    hierarchy = {}
+    current_level = hierarchy
+    parent_levels = []  # Stack to track parent levels and their 'spaces'
+
+    for prop, spaces, prop_type, description in properties:
+        # Pop from the parent_levels stack until we find the correct parent level
+        while parent_levels and parent_levels[-1]["spaces"] >= spaces:
+            parent_levels.pop()
+
+        # Set the current level based on the last item in the stack
+        if parent_levels:
+            current_level = parent_levels[-1]["properties"]
+        else:
+            current_level = hierarchy
+
+        new_property = {}
+        if prop_type == "boolean":
+            # Define the new property
+            new_property = {
+                "spaces": spaces,  # Track the spaces for this property level
+                "type": prop_type,
+                "title": description.capitalize(),
+            }
+
+        else:
+
+            # Define the new property
+            new_property = {
+                "spaces": spaces,  # Track the spaces for this property level
+                "type": prop_type,
+                "title": prop.replace("_", " ").capitalize().strip(),
+                "description": description,
+            }
+
+        # Handle object type by initializing its properties dictionary
+        if prop_type == "object":
+            new_property["properties"] = {}
+
+        # Handle array type specifically by adding items with a properties dictionary
+        if prop_type == "array":
+            new_property["items"] = {"type": "object", "properties": {}}
+
+        # Add the new property to the current level's properties
+        current_level[prop.strip()] = new_property
+
+        # If the property is an array or object, push it onto the parent_levels stack
+        if prop_type == "array":
+            parent_levels.append(
+                {
+                    "spaces": spaces,  # Ensure spaces is included
+                    "properties": new_property["items"][
+                        "properties"
+                    ],  # Reference the properties of items
+                }
+            )
+        elif prop_type == "object":
+            parent_levels.append(
+                {
+                    "spaces": spaces,  # Ensure spaces is included
+                    "properties": new_property[
+                        "properties"
+                    ],  # Reference the properties of object
+                }
+            )
+
+    return hierarchy
+
+
+def remove_first_key(data):
+    """Remove the first top-level key and start the object from its value."""
+    if isinstance(data, dict) and data:
+        first_key = next(iter(data))  # Get the first key
+        return data[first_key]
+    return data
+
+
+def process_array_items(array_content, nesting=3):
+    array_items = {}
+    spaces = "{" + str(nesting) + "}"
+    pattern = r"\* " + spaces + r"- (\w+): \[(\w+)\] (.*)"
+    object_property_pattern1 = re.compile(pattern)
+
+    # Extract properties
+    properties = extract_properties(array_content)
+    hierarchy = build_hierarchy(properties)
+
+    # Process each match in the array content
+    for arr_match in object_property_pattern1.finditer(array_content):
+        arr_name, arr_type, arr_desc = arr_match.groups()
+        array_items[arr_name] = hierarchy
+        break
+
+    array_items = remove_spaces_property(array_items)
+    array_items = remove_empty_properties(array_items)
+    return {"type": "object", "properties": remove_first_key(array_items)}
+
+
+def remove_spaces_property(obj):
+    """Recursively removes the 'spaces' property from a dictionary or list of dictionaries and returns the cleaned object."""
+    if isinstance(obj, dict):
+        # Remove the 'spaces' key if it exists
+        obj.pop("spaces", None)
+
+        # Recursively clean nested dictionaries or lists
+        for key, value in obj.items():
+            if isinstance(value, (dict, list)):
+                obj[key] = remove_spaces_property(value)
+
+    elif isinstance(obj, list):
+        # If it's a list, clean each item in the list
+        return [remove_spaces_property(item) for item in obj]
+
+    return obj
 
 
 def process_directory(directory, include_directory):
@@ -445,7 +635,7 @@ def process_directory(directory, include_directory):
     """
     for root, dirs, files in os.walk(directory):
         for file in files:
-              if file.endswith('.twig') and not file.endswith('.stories.twig'):
+            if file.endswith(".twig") and not file.endswith(".stories.twig"):
                 component_name = file.split(".")[0]
                 file_path = os.path.join(root, file)
                 # Check for the existence of a JS file
@@ -459,16 +649,34 @@ def process_directory(directory, include_directory):
                         twig_content, component_name, root, include_directory
                     )
 
+                group = "default"
+
+                if "00-base" in file_path:
+                    group = "Base"
+                elif "01-atoms" in file_path:
+                    group = "Atoms"
+                elif "02-molecules" in file_path:
+                    group = "Molecules"
+                elif "03-organisms" in file_path:
+                    group = "Organisms"
+                elif "04-templates" in file_path:
+                    group = "Templates"
+
                 # Generate YAML content and write to .component.yml file
                 yaml_output = generate_yaml(
-                    component_name, variables, slots, has_js_file, conditional_variables
+                    component_name,
+                    variables,
+                    slots,
+                    has_js_file,
+                    conditional_variables,
+                    group,
                 )
                 yaml_file_path = os.path.join(
                     root, f"{component_name.lower()}.component.yml"
                 )
                 with open(yaml_file_path, "w") as yaml_file:
                     yaml_file.write(yaml_output)
-                    
+
                 # Create a string with the desired content
                 readme_content = f"""
 # {component_name.replace('-', ' ').capitalize()}
@@ -477,7 +685,8 @@ This is the {component_name.replace('-', ' ')} component.
 
 ## Usage
 
-This component can be used within Experience Builder and other page builders that support SDC. It can also be added to other components and theme templates.
+This component can be used within Experience Builder and other page builders
+that support SDC. It can also be added to other components and theme templates.
 """
                 # Open a file in write mode and write the content to it
                 readme_file_path = os.path.join(root, "README.md")
@@ -498,18 +707,19 @@ def main():
     parser.add_argument(
         "directory", help="Path to the directory containing Twig files."
     )
-    
+
     args = parser.parse_args()
     directory = args.directory
 
     # Find the index of the 'components' directory
-    components_index = directory.find('components')
+    components_index = directory.find("components")
     components_path = args.directory
     # Split the path into the part up to and including 'components' and the rest
     if components_index != -1:
-        components_path = directory[:components_index + len('components')]
-        
+        components_path = directory[: components_index + len("components")]
+
     process_directory(args.directory, components_path)
+
 
 if __name__ == "__main__":
     main()
