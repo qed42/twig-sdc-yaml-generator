@@ -113,57 +113,6 @@ def check_variable_in_includes(twig_content, target_var_name):
                         return file_name, include_variables_name
     return None, None
 
-
-def get_common_properties(include_variables_name, include_variables):
-    """
-    Get the common properties between two dictionaries.
-
-    Args:
-        include_variables_name (dict): The dictionary of variables from the include block.
-        include_variables (dict): The dictionary of variables from the parsed include file.
-
-    Returns:
-        dict: A dictionary containing common properties.
-    """
-    common_properties = {
-        key: include_variables[key]
-        for key in include_variables
-        if key in include_variables_name
-    }
-    return common_properties
-
-
-def filter_properties(properties, all_variable_names_twig_filtered, var_name):
-    filtered_properties = {}
-    for key, value in properties.items():
-        if key not in all_variable_names_twig_filtered and key != var_name:
-            if "properties" in value and isinstance(value["properties"], dict):
-                nested_filtered = filter_properties(
-                    value["properties"], all_variable_names_twig_filtered, var_name
-                )
-                if nested_filtered:
-                    value["properties"] = nested_filtered
-                else:
-                    value.pop("properties", None)
-            filtered_properties[key] = value
-        elif key == var_name:
-            nested_type = get_last_child_type(value)
-            if nested_type:
-                filtered_properties["type"] = nested_type
-                filtered_properties["array_type"] = True
-    return filtered_properties
-
-
-def get_last_child_type(properties):
-    last_child_type = None
-    for key, value in properties.items():
-        if "properties" in value:
-            last_child_type = get_last_child_type(value["properties"])
-        elif "type" in value:
-            last_child_type = value["type"]
-    return last_child_type
-
-
 def parse_default_value(default_value):
     """Parse and return the default value as the appropriate Python type."""
     default_value = default_value.strip().replace("'", "").replace('"', "")
