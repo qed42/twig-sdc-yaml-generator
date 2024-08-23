@@ -218,6 +218,14 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
             }
             continue
 
+        if var_name == 'attributes':
+            variable_entry = {
+                "type": "Drupal\Core\Template\Attribute",
+                "name": "Attributes"
+            }
+            variables[var_name] = variable_entry
+            continue
+
         # Create an entry for the variable
         variable_entry = {
             "type": var_type if var_type != "object" else "object",
