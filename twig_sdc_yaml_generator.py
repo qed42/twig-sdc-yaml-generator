@@ -264,37 +264,11 @@ def parse_variables(twig_content, component_name, file_directory, include_direct
             file_name, include_variables_name = check_variable_in_includes(
                 twig_content, var_name
             )
+            file_name_copy = file_name
             include_file_path = find_include_file(include_directory, file_name)
             if include_file_path:
-                with open(include_file_path, "r") as include_file:
-                    include_content = include_file.read()
-                    include_variables, _, _ = parse_variables(
-                        include_content,
-                        component_name,
-                        file_directory,
-                        include_directory,
-                    )
-                    common_properties = get_common_properties(
-                        include_variables_name, include_variables
-                    )
-                    all_variable_names_twig_filtered = [
-                        item for item in all_variable_names_twig if item != var_name
-                    ]
-                    filtered_properties = filter_properties(
-                        common_properties, all_variable_names_twig_filtered, var_name
-                    )
-                    if (
-                        "array_type" in filtered_properties
-                        and filtered_properties["array_type"]
-                    ):
-                        filtered_properties.pop("array_type")
-                        variable_entry["items"] = filtered_properties
-                    else:
-                        variable_entry["items"] = {
-                            "type": "object",
-                            "properties": filtered_properties,
-                        }
-
+                variable_entry['$ref'] = 'json-schema-definitions://demo_design_system.theme/' + file_name_copy.replace(".twig", "")
+                
             else:
                 array_scope_pattern = re.compile(
                     rf"\* - {var_name}: \[array\](.*?)(\* - |\Z)", re.DOTALL
@@ -393,14 +367,13 @@ def generate_yaml(
 
     # Dump YAML data
     yaml_output = yaml.dump(
-        yaml_data, sort_keys=False, default_flow_style=False, indent=2
-    )
+        yaml_data, sort_keys=False, default_flow_style=False, indent=2    )
     return format_yaml(yaml_output)
 
 
 def format_yaml(yaml_str):
     lines = yaml_str.splitlines()
-    result = []
+    result = ["'$schema': 'https://git.drupalcode.org/project/drupal/-/raw/HEAD/core/assets/schemas/v1/metadata.schema.json'", ""]
     properties_depth = 0
     previous_indent = 0
 
