@@ -1,11 +1,8 @@
 # Script Overview:
 This script scans a directory for Twig files, extracts variable definitions and options from comments, and generates the corresponding .component.yml files required for SDC components. 
 
-# Try It Out Online
-You can try this functionality online using the [AI SDC Generator](https://www.spacedxp.com/ai-sdc-generator/).
-
 # Try it as Drush command (Coming soon)
-[Twig to SDC](https://www.drupal.org/project/twig_to_sdc)
+Drupal module: [Twig to SDC](https://www.drupal.org/project/twig_to_sdc)\
 Demo: https://www.linkedin.com/posts/anand-toshniwal_drupal-twig-sdc-activity-7253234417312165888-Whve?utm_source=share&utm_medium=member_desktop
 
 ## How It Works:
